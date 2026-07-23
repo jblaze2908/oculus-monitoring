@@ -1,0 +1,18 @@
+# All-in-one image: glances collector + dashboard proxy in one container.
+# Default two-container setup uses ./Dockerfile instead.
+FROM python:3.12-slim-bookworm
+
+# glances[web] = REST API server; [containers] = docker plugin; batinfo = battery
+RUN pip install --no-cache-dir "glances[web,containers]==4.5.5" batinfo
+
+WORKDIR /app
+COPY server.py index.html entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Runs as root intentionally: needs host /proc (pid: host) and docker.sock,
+# same model as the upstream nicolargo/glances image.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/4/cpu', timeout=3)" || exit 1
+
+EXPOSE 8080
+CMD ["./entrypoint.sh"]

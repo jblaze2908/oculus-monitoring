@@ -310,8 +310,9 @@
     <div class="fan"><span>Fan</span><span class="num"><b id="fan_v">—</b> RPM</span></div>
   </div>
   <div class="panel">
-    <h2>Connectivity</h2>
+    <h2>Health &amp; connectivity</h2>
     <div id="connectivity"></div>
+    <div id="healthrows"></div>
   </div>
 </div>
 
@@ -321,7 +322,7 @@
     <table>
       <thead><tr>
         <th>Name</th><th>Image</th><th>Status</th><th class="r">Uptime</th>
-        <th class="r">CPU %</th><th class="r">Mem</th><th class="r">Mem %</th><th class="r">I/O read/write</th>
+        <th class="r">CPU %</th><th class="r">Mem</th><th class="r">Mem %</th><th class="r">I/O read/write</th><th class="r">Restarts</th>
       </tr></thead>
       <tbody id="ctrtb"></tbody>
     </table>
@@ -329,7 +330,8 @@
 </div>
 
 <div class="panel dash" style="margin-bottom:var(--gap)">
-  <h2>System events <span class="r">glances alert log · CPU / MEM / LOAD spikes</span></h2>
+  <h2>System events <span class="r">monitor log + glances spikes</span></h2>
+  <div id="oevents"></div>
   <div id="alerts"></div>
 </div>
 
@@ -584,9 +586,40 @@ function renderContainers(cs){
         <td class="r num">${mu!=null?fmtSize(mu):"—"}</td>
         <td class="r num">${mp!=null?mp.toFixed(1):"—"}</td>
         <td class="r num">${fmtSize(io.cumulative_ior||0)} / ${fmtSize(io.cumulative_iow||0)}</td>
+        <td class="r num">${(oculus.restarts&&oculus.restarts[c.name])?oculus.restarts[c.name].restarts:"—"}</td>
       </tr>`;
-    }).join(""):'<tr><td colspan="8"><div class="quiet">no containers found — is /var/run/docker.sock mounted into glances?</div></td></tr>';
+    }).join(""):'<tr><td colspan="9"><div class="quiet">no containers found — is /var/run/docker.sock mounted into glances?</div></td></tr>';
 }
+
+/* ---------- oculus monitor: /oculus/status {smart,dns,alerts,restarts,growth,events[]} ---------- */
+let oculus={};
+async function pollOculus(){
+  try{oculus=await getJSON("/oculus/status");}catch(e){oculus={};return;}
+  const h=$("healthrows");
+  const s=oculus.smart, dn=oculus.dns, act=oculus.alerts||{};
+  let rows="";
+  if(s){
+    const ok=s.passed&&!((s.attrs||{}).Reallocated_Sector_Ct>0||(s.attrs||{}).Current_Pending_Sector>0||(s.attrs||{}).media_errors>0);
+    const wear=(s.attrs||{}).SSD_Life_Left!=null?s.attrs.SSD_Life_Left+"% life":
+      (s.attrs||{}).percentage_used!=null?s.attrs.percentage_used+"% used":
+      (s.attrs||{}).Power_On_Hours!=null?s.attrs.Power_On_Hours+" h":"";
+    rows+=`<div class="krow"><span class="k">Disk SMART</span><span class="v" style="color:${ok?"var(--ok)":"var(--crit)"}">${ok?"PASSED":"FAILING"}${wear?' · <span style="color:var(--fg2);font-weight:400">'+escapeHtml(String(wear))+"</span>":""}</span></div>`;
+  } else rows+=`<div class="krow"><span class="k">Disk SMART</span><span class="v" style="color:var(--fg3)">no data</span></div>`;
+  if(dn)rows+=`<div class="krow"><span class="k">DNS (AdGuard)</span><span class="v num" style="color:${dn.ok?"var(--ok)":"var(--crit)"}">${dn.ok?dn.latency_ms+" ms":"NOT ANSWERING"}</span></div>`;
+  const g=oculus.growth;
+  if(g&&g.days_to_full!=null)rows+=`<div class="krow"><span class="k">Disk full in</span><span class="v num">~${Math.round(g.days_to_full)} days</span></div>`;
+  const names=Object.keys(act);
+  rows+=`<div class="krow"><span class="k">Active alerts</span><span class="v" style="color:${names.length?"var(--crit)":"var(--ok)"}">${names.length?names.join(", "):"none"}</span></div>`;
+  h.innerHTML=rows;
+  // events feed
+  const ev=(oculus.events||[]).slice(0,8);
+  $("oevents").innerHTML=ev.map(e=>{
+    const col=e.kind==="alert"?"var(--crit)":e.kind==="resolved"?"var(--ok)":e.kind==="reboot"?"var(--warn)":"var(--fg3)";
+    const t=new Date(e.ts*1000).toLocaleString([],{hour12:false,month:"short",day:"numeric"});
+    return `<div class="krow"><span class="k"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${col};margin-right:8px"></span><span class="num">${t}</span></span><span class="v" style="font-weight:400;color:var(--fg2)">${escapeHtml(e.kind)} · ${escapeHtml(e.detail)}</span></div>`;
+  }).join("");
+}
+setInterval(pollOculus,10000);pollOculus();
 
 /* ---------- events: GlancesEvent {begin,end(-1 ongoing),state,type,min,max,avg,count,top[],desc} ---------- */
 function renderAlerts(alerts){
@@ -637,7 +670,7 @@ function drawSpark(cv,data,col){
 
 function renderStorage(fs){
   const box=$("storage");
-  const list=fs.filter(f=>f.size>=1073741824);
+  const list=fs.filter(f=>f.size>=1073741824&&!/^\/etc\//.test(f.mnt_point));
   if(!list.length){box.innerHTML='<div style="color:var(--fg3);font-size:12px">No mounts</div>';return;}
   box.innerHTML=list.map(f=>{
     const p=+(f.percent||0);const cls=pctClass(p);

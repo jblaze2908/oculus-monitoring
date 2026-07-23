@@ -1,3 +1,4 @@
+# Two containers: privileged collector (upstream glances) + dashboard/monitor.
 services:
   glances:
     image: nicolargo/glances:4.5.5-full
@@ -10,11 +11,27 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro   # containers plugin
       - /etc/os-release:/etc/os-release:ro
+
   dashboard:
     build: .
-    image: jblaze2908/oculus-monitoring:1.1
+    image: jblaze2908/oculus-monitoring:1.2
     restart: unless-stopped
-    network_mode: host   # reach glances on 127.0.0.1:61208, serve :8080
+    network_mode: host   # reach glances on 127.0.0.1:61208, serve :8080, probe DNS
     read_only: true
+    tmpfs: [/tmp]
+    environment:
+      - NTFY_URL=${NTFY_URL:-}        # e.g. https://ntfy.sh/oculus-xxxx (set in .env)
+      - SMART_DEVICE=/dev/sda
+      - DNS_CHECK=${DNS_CHECK:-192.168.1.10}   # AdGuard binds the LAN IP, not loopback
+    volumes:
+      - oculus-data:/data                              # sqlite history + events
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # restart counts
+    devices:
+      - /dev/sda:/dev/sda              # SMART reads
+    cap_add:
+      - SYS_RAWIO                      # smartctl SAT passthrough
     depends_on:
       - glances
+
+volumes:
+  oculus-data:

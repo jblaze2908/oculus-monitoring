@@ -1,11 +1,16 @@
-"""Server dashboard: serves the static UI and proxies /api/* to local Glances.
+"""Server dashboard: serves the static UI, proxies /api/* to local Glances,
+and exposes the Oculus monitor (alerts/SMART/DNS/history) at /oculus/*.
 
-Stdlib only. Runs behind systemd as an unprivileged user.
+Stdlib only.
 """
 import http.server
+import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
+
+import monitor
 
 GLANCES = os.environ.get("GLANCES_URL", "http://127.0.0.1:61208").rstrip("/")
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -15,12 +20,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
-        if self.path.startswith("/api/"):
+        if self.path.startswith("/oculus/"):
+            self._oculus()
+        elif self.path.startswith("/api/"):
             self._proxy()
         elif self.path in ("/", "/index.html"):
             self._serve_index()
         else:
             self.send_error(404)
+
+    def _oculus(self) -> None:
+        url = urllib.parse.urlparse(self.path)
+        try:
+            if url.path == "/oculus/status":
+                data = monitor.api_status()
+            elif url.path == "/oculus/history":
+                hours = int(urllib.parse.parse_qs(url.query).get("hours", ["24"])[0])
+                data = monitor.api_history(min(hours, 24 * 30))
+            else:
+                self.send_error(404)
+                return
+            self._respond(200, json.dumps(data).encode(), "application/json")
+        except Exception:
+            self.send_error(500, "monitor error")
 
     def _proxy(self) -> None:
         if ".." in self.path:
@@ -54,5 +76,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
+    monitor.start()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.serve_forever()

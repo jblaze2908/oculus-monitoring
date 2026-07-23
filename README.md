@@ -22,9 +22,15 @@ browser ──:8080──> dashboard container (python stdlib)
 
 ## Run
 
+Two-container (default — privileged collector isolated from the UI):
 ```bash
 docker compose up -d
 # dashboard: http://<host>:8080
+```
+
+Single-container (simpler, one image with glances baked in, runs root):
+```bash
+docker compose -f docker-compose.aio.yml up -d
 ```
 
 Env vars for the dashboard container: `GLANCES_URL` (default `http://127.0.0.1:61208`),

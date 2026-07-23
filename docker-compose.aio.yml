@@ -1,0 +1,15 @@
+# Single-container variant: glances + dashboard in one image.
+# Default (two containers, more isolation): docker compose up -d
+services:
+  oculus:
+    image: jblaze2908/oculus-monitoring:aio
+    build:
+      context: .
+      dockerfile: Dockerfile.aio
+    restart: unless-stopped
+    network_mode: host   # real NICs (wlp2s0), wifi signal, dashboard on :8080
+    pid: host            # real host process list
+    uts: host            # real hostname/kernel
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # containers panel
+      - /etc/os-release:/etc/os-release:ro
