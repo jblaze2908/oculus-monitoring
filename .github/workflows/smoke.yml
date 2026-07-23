@@ -1,0 +1,11 @@
+name: smoke
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
