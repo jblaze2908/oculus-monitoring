@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oculus · master-server</title>
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#141416; --panel2:#0f0f11;
+    --border:rgba(255,255,255,.08); --border2:rgba(255,255,255,.05);
+    --fg:#e6e6e8; --fg2:#9a9aa0; --fg3:#6a6a70;
+    --ok:#34d399; --warn:#fbbf24; --crit:#f87171;
+    --down:#3b82f6; --up:#d97706; --accent:#c9c9ce;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  /* density scale — driven by data-density on <body> */
+  body{--pad:16px; --gap:16px; --kpi-big:30px; --chart-h:170px; --row-y:6px}
+  body[data-density="compact"]{--pad:11px; --gap:11px; --kpi-big:25px; --chart-h:132px; --row-y:3px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--fg);font-family:var(--sans);
+    font-size:14px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  body{padding:18px;max-width:1560px;margin:0 auto;overflow-x:hidden}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum";letter-spacing:-.01em}
+  a{color:var(--down)}a:hover{color:#5fa0ff}
+
+  /* header */
+  header{display:flex;align-items:center;gap:22px;flex-wrap:wrap;
+    padding:14px 18px;border:1px solid var(--border);border-radius:10px;
+    background:var(--panel);margin-bottom:16px}
+  .brand{display:flex;align-items:center;gap:9px;padding-right:18px;margin-right:4px;border-right:1px solid var(--border)}
+  .brand .glyph{width:22px;height:22px;border-radius:6px;border:1.5px solid var(--fg2);position:relative;flex:none}
+  .brand .glyph::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--fg)}
+  .brand .wm{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.18em;color:var(--fg)}
+  .host{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .host .os{display:block;font-size:11px;font-weight:400;color:var(--fg2);
+    letter-spacing:0;margin-top:2px}
+  .hgap{flex:1}
+  .hmeta{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+  .hmeta .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--fg3)}
+  .hmeta .v{font-size:14px;color:var(--fg)}
+  .conn{display:flex;align-items:center;gap:7px;padding:6px 12px;
+    border:1px solid var(--border);border-radius:999px;font-size:12px;
+    font-weight:600;letter-spacing:.04em}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--fg3);flex:none}
+  .conn.live .dot{background:var(--ok)} .conn.live{color:var(--ok)}
+  .conn.stale .dot{background:var(--crit)} .conn.stale{color:var(--crit)}
+  .conn.demo .dot{background:var(--warn)} .conn.demo{color:var(--warn)}
+  .densbtn{display:flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .densbtn button{background:transparent;border:0;color:var(--fg3);font:inherit;font-size:11px;
+    font-weight:600;letter-spacing:.04em;padding:6px 12px;cursor:pointer}
+  .densbtn button.on{background:rgba(255,255,255,.07);color:var(--fg)}
+
+  /* generic panel */
+  .panel{border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:var(--pad)}
+  .panel h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--fg3);margin-bottom:13px;display:flex;align-items:center;gap:8px}
+  .panel h2 .r{margin-left:auto;color:var(--fg2);font-weight:500;letter-spacing:.02em;text-transform:none}
+
+  /* kpis */
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:var(--gap);margin-bottom:var(--gap)}
+  .kpi{border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:var(--pad)}
+  .kpi .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--fg3);margin-bottom:9px}
+  .kpi .big{font-family:var(--mono);font-size:var(--kpi-big);font-weight:600;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+  .kpi .big .u{font-size:15px;font-weight:500;color:var(--fg2);margin-left:2px}
+  .kpi .sub{font-size:11.5px;color:var(--fg2);margin-top:8px}
+  .kpi .sub b{color:var(--fg);font-weight:500}
+  .kpi.ok .big{color:var(--ok)} .kpi.warn .big{color:var(--warn)} .kpi.crit .big{color:var(--crit)}
+  .mini{height:3px;border-radius:2px;background:var(--border);margin-top:10px;overflow:hidden}
+  .mini>i{display:block;height:100%;background:var(--accent);transition:width .4s}
+  .kpi.ok .mini>i{background:var(--ok)} .kpi.warn .mini>i{background:var(--warn)} .kpi.crit .mini>i{background:var(--crit)}
+  .batline{display:flex;align-items:baseline;gap:8px}
+  .batstate{font-size:11px;font-weight:600;letter-spacing:.03em;display:flex;align-items:center;gap:4px}
+  .batsegs{display:flex;gap:3px;margin-top:10px}
+  .batsegs>i{flex:1;height:9px;border-radius:2px;background:var(--border);transition:background .4s}
+  .bat_est{font-size:11px;color:var(--fg2);margin-top:7px;font-family:var(--mono);letter-spacing:-.01em}
+  .netnow{display:flex;gap:16px}
+  .netnow .n{flex:1}
+  .netnow .arw{font-family:var(--mono);font-weight:700}
+  .arw.d{color:var(--down)} .arw.u{color:var(--up)}
+
+  /* layout grid */
+  .grid{display:grid;gap:var(--gap)}
+  .charts{grid-template-columns:1fr 1fr;margin-bottom:var(--gap)}
+  .lower{grid-template-columns:repeat(4,1fr);margin-bottom:var(--gap)}
+  @media(max-width:1420px){.lower{grid-template-columns:1fr 1fr}}
+  .stack{display:flex;height:14px;border-radius:4px;overflow:hidden;gap:2px;
+    background:var(--panel2);border:1px solid var(--border2);margin-bottom:10px}
+  .stack>i{display:block;height:100%;min-width:0}
+  .krow{display:flex;justify-content:space-between;align-items:center;font-size:12px;
+    padding:5.5px 0;border-bottom:1px solid var(--border2)}
+  .krow:last-child{border-bottom:0}
+  .krow .k{color:var(--fg2)} .krow .v{font-weight:600}
+  .quiet{color:var(--fg3);font-size:12px;padding:4px 0}
+  canvas.line{display:block;width:100%;height:var(--chart-h);cursor:crosshair}
+  .legend{display:flex;gap:16px;font-size:11.5px;color:var(--fg2);margin-top:2px}
+  .legend .sw{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+
+  /* per-core sparkline strip */
+  .cores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:14px}
+  .core{border:1px solid var(--border2);border-radius:6px;padding:7px 8px 5px;position:relative;overflow:hidden}
+  .core .chead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px}
+  .core .cn{font-family:var(--mono);font-size:10px;color:var(--fg3)}
+  .core .cv{font-family:var(--mono);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+  .core canvas{display:block;width:100%;height:22px}
+
+  /* storage */
+  .fsrow{margin-bottom:14px}
+  .fsrow:last-child{margin-bottom:0}
+  .fshead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .fshead .mp{font-weight:500} .fshead .mp small{color:var(--fg3);font-weight:400;margin-left:6px}
+  .fshead .pc{font-size:13px;font-weight:600}
+  .bar{height:8px;border-radius:4px;background:var(--panel2);border:1px solid var(--border2);overflow:hidden}
+  .bar>i{display:block;height:100%;transition:width .5s}
+  .fssub{font-size:11px;color:var(--fg2);margin-top:5px}
+
+  /* thermals */
+  .temps{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .tcell{display:flex;align-items:center;gap:9px}
+  .tcell .tl{font-size:12px;color:var(--fg2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tcell .tv{font-size:14px;font-weight:600}
+  .tdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .fan{margin-top:14px;padding-top:12px;border-top:1px solid var(--border2);
+    display:flex;justify-content:space-between;font-size:12px;color:var(--fg2)}
+  .fan b{color:var(--fg);font-weight:600}
+
+  /* process table */
+  .ptwrap{max-height:360px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  thead th{position:sticky;top:0;background:var(--panel);text-align:left;
+    font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--fg3);
+    font-weight:600;padding:7px 10px;border-bottom:1px solid var(--border)}
+  thead th.r,tbody td.r{text-align:right}
+  tbody td{padding:var(--row-y) 10px;border-bottom:1px solid var(--border2);white-space:nowrap}
+  tbody tr:hover{background:rgba(255,255,255,.03)}
+  td.name{font-weight:500;max-width:190px;overflow:hidden;text-overflow:ellipsis}
+  td.usr{color:var(--fg2)}
+  tr.prow{cursor:pointer}
+  tr.prow.open{background:rgba(255,255,255,.045)}
+  .exp{color:var(--fg3);font-family:var(--mono);font-size:10px;width:12px;display:inline-block}
+  tr.pdetail td{padding:0 10px 9px 30px;border-bottom:1px solid var(--border2);white-space:normal}
+  tr.pdetail .cmd{font-family:var(--mono);font-size:11.5px;color:var(--fg2);word-break:break-all;line-height:1.5}
+
+  /* terminal (raw-api) view */
+  #termview{display:none;font-family:var(--mono);font-size:12.5px;line-height:1.5;
+    border:1px solid var(--border);border-radius:10px;background:#08080a;padding:16px 18px;
+    overflow-x:auto;-webkit-font-smoothing:auto}
+  body[data-view="term"] #termview{display:block}
+  body[data-view="term"] .kpis,body[data-view="term"] .charts,
+  body[data-view="term"] .lower,body[data-view="term"] .panel.dash{display:none}
+  .t-top{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;color:var(--fg);
+    border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:10px}
+  .t-meters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:2px 22px;margin-bottom:12px}
+  .t-meters .mrow{display:flex;justify-content:space-between;gap:10px}
+  .t-lbl{color:var(--fg3)} .t-val{color:var(--ok)} .t-warn{color:var(--warn)} .t-crit{color:var(--crit)}
+  .t-dim{color:var(--fg2)}
+  .t-body{display:grid;grid-template-columns:300px 1fr;gap:26px}
+  @media(max-width:820px){.t-body{grid-template-columns:1fr}}
+  .t-sec{color:var(--fg2);text-transform:uppercase;letter-spacing:.08em;font-weight:700;
+    margin:12px 0 3px;font-size:11px}
+  .t-sec:first-child{margin-top:0}
+  .t-kv{display:flex;justify-content:space-between;gap:12px}
+  table.ttbl{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+  table.ttbl th{text-align:right;color:var(--fg2);font-weight:700;padding:1px 7px;border-bottom:1px solid var(--border)}
+  table.ttbl th.l,table.ttbl td.l{text-align:left}
+  table.ttbl td{text-align:right;padding:1px 7px;color:var(--ok)}
+  table.ttbl td.dim{color:var(--fg2)} table.ttbl td.fg{color:var(--fg)}
+  table.ttbl tr:hover td{background:rgba(255,255,255,.03)}
+  .t-cmd{color:var(--fg2);max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  .t-tasks{max-height:70vh;overflow:auto}
+  .t-tasks thead th{position:sticky;top:0;background:#08080a;z-index:1}
+  .st{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10.5px;font-weight:600;
+    background:var(--border);color:var(--fg2)}
+  .st.R{background:rgba(52,211,153,.16);color:var(--ok)}
+  .st.Z{background:rgba(248,113,113,.18);color:var(--crit)}
+  .st.D{background:rgba(251,191,36,.16);color:var(--warn)}
+
+  /* chart tooltip */
+  .ttip{position:fixed;z-index:20;pointer-events:none;background:#1c1c20;
+    border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:11.5px;
+    box-shadow:0 6px 18px rgba(0,0,0,.4);display:none;min-width:120px}
+  .ttip .tt{color:var(--fg3);font-size:10px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em}
+  .ttip .tr{display:flex;justify-content:space-between;gap:14px;line-height:1.7}
+  .ttip .tr .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+
+  .stale-veil{opacity:.55;transition:opacity .3s}
+
+  @media(max-width:1080px){
+    .kpis{grid-template-columns:repeat(3,1fr)}
+    .charts,.lower{grid-template-columns:1fr}
+  }
+  @media(max-width:640px){
+    body{padding:12px}
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .temps{grid-template-columns:1fr}
+    .cores{grid-template-columns:repeat(2,1fr)}
+    header{gap:12px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="glyph"></span><span class="wm">OCULUS</span></div>
+  <div class="host">
+    <span id="hostname">—</span>
+    <span class="os" id="osline">connecting…</span>
+  </div>
+  <div class="hgap"></div>
+  <div class="hmeta"><span class="k">LAN IP</span><span class="v num" id="lanip">—</span></div>
+  <div class="hmeta"><span class="k">Uptime</span><span class="v num" id="uptime">—</span></div>
+  <div class="hmeta"><span class="k">Local time</span><span class="v num" id="clock">—</span></div>
+  <div class="densbtn" id="viewbtn" style="margin-right:10px">
+    <button data-v="dash" class="on">DASH</button>
+    <button data-v="term">TERM</button>
+  </div>
+  <div class="densbtn" id="densbtn">
+    <button data-d="comfortable" class="on">COMFY</button>
+    <button data-d="compact">DENSE</button>
+  </div>
+  <div class="conn" id="conn"><span class="dot"></span><span id="connlbl">CONNECTING</span></div>
+</header>
+
+<div class="kpis" id="kpis">
+  <div class="kpi" id="k_cpu">
+    <div class="lbl">CPU</div>
+    <div class="big num"><span id="cpu_v">—</span><span class="u">%</span></div>
+    <div class="sub num">load <b id="cpu_load">—</b> · <b id="cpu_ghz">—</b> GHz</div>
+    <div class="mini"><i id="cpu_bar"></i></div>
+  </div>
+  <div class="kpi" id="k_mem">
+    <div class="lbl">Memory</div>
+    <div class="big num"><span id="mem_v">—</span><span class="u">%</span></div>
+    <div class="sub num"><b id="mem_ud">—</b> · <b id="mem_avail">—</b> free<span id="mem_cache"></span></div>
+    <div class="mini"><i id="mem_bar"></i></div>
+  </div>
+  <div class="kpi" id="k_swap">
+    <div class="lbl">Swap</div>
+    <div class="big num"><span id="swap_v">—</span><span class="u">%</span></div>
+    <div class="sub num"><b id="swap_ud">—</b></div>
+    <div class="mini"><i id="swap_bar"></i></div>
+  </div>
+  <div class="kpi" id="k_bat">
+    <div class="lbl">Battery</div>
+    <div class="batline">
+      <div class="big num"><span id="bat_v">—</span><span class="u">%</span></div>
+      <span class="batstate" id="bat_state">—</span>
+    </div>
+    <div class="batsegs" id="bat_segs"></div>
+    <div class="bat_est num" id="bat_est">—</div>
+  </div>
+  <div class="kpi" id="k_net">
+    <div class="lbl">Network</div>
+    <div class="netnow">
+      <div class="n"><div class="big num" style="font-size:19px"><span class="arw d">↓</span> <span id="net_d">—</span></div></div>
+      <div class="n"><div class="big num" style="font-size:19px"><span class="arw u">↑</span> <span id="net_u">—</span></div></div>
+    </div>
+    <div class="sub" id="net_if">—</div>
+  </div>
+  <div class="kpi" id="k_proc">
+    <div class="lbl">Processes</div>
+    <div class="big num"><span id="proc_total">—</span></div>
+    <div class="sub num"><b id="proc_run">—</b> running</div>
+  </div>
+</div>
+
+<div class="grid charts">
+  <div class="panel">
+    <h2>CPU utilization <span class="r">3 min · 2 s</span></h2>
+    <canvas id="cpuChart" class="line"></canvas>
+    <div class="cores" id="cores"></div>
+  </div>
+  <div class="panel">
+    <h2>Network throughput <span class="r">3 min · 2 s</span></h2>
+    <canvas id="netChart" class="line"></canvas>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--down)"></span>Download</span>
+      <span><span class="sw" style="background:var(--up)"></span>Upload</span>
+    </div>
+  </div>
+</div>
+
+<div class="grid charts">
+  <div class="panel">
+    <h2>Disk I/O <span class="r">3 min · 2 s</span></h2>
+    <canvas id="dioChart" class="line"></canvas>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--down)"></span>Read</span>
+      <span><span class="sw" style="background:var(--up)"></span>Write</span>
+    </div>
+  </div>
+  <div class="panel" id="batpanel">
+    <h2>Battery <span class="r" id="batchart_r">3 min · 2 s</span></h2>
+    <canvas id="batChart" class="line"></canvas>
+  </div>
+</div>
+
+<div class="grid lower">
+  <div class="panel">
+    <h2>Storage</h2>
+    <div id="storage"></div>
+  </div>
+  <div class="panel">
+    <h2>Memory composition</h2>
+    <div id="memcomp"></div>
+  </div>
+  <div class="panel">
+    <h2>Thermals</h2>
+    <div class="temps" id="temps"></div>
+    <div class="fan"><span>Fan</span><span class="num"><b id="fan_v">—</b> RPM</span></div>
+  </div>
+  <div class="panel">
+    <h2>Connectivity</h2>
+    <div id="connectivity"></div>
+  </div>
+</div>
+
+<div class="panel dash" style="margin-bottom:var(--gap)">
+  <h2>Containers <span class="r" id="ctr_r">docker</span></h2>
+  <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Image</th><th>Status</th><th class="r">Uptime</th>
+        <th class="r">CPU %</th><th class="r">Mem</th><th class="r">Mem %</th><th class="r">I/O read/write</th>
+      </tr></thead>
+      <tbody id="ctrtb"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel dash" style="margin-bottom:var(--gap)">
+  <h2>System events <span class="r">glances alert log · CPU / MEM / LOAD spikes</span></h2>
+  <div id="alerts"></div>
+</div>
+
+<div class="panel dash">
+  <h2>Processes <span class="r">top 12 by CPU · click a row for cmdline</span></h2>
+  <div class="ptwrap">
+    <table>
+      <thead><tr>
+        <th class="r">PID</th><th>Name</th><th>User</th>
+        <th class="r">CPU %</th><th class="r">MEM %</th><th class="r">Disk I/O</th><th class="r">Thr</th><th>State</th>
+      </tr></thead>
+      <tbody id="proctb"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="termview"></div>
+
+<div class="ttip" id="ttip"></div>
+
+<script>
+"use strict";
+const N = 90; // history length
+const POLL = 2000;
+
+/* ---------- state ---------- */
+let haveReal=false, everReal=false;
+let prevNet=null, prevT=0;
+const hist={cpu:new Array(N).fill(0),down:new Array(N).fill(0),up:new Array(N).fill(0),
+  dr:new Array(N).fill(0),dw:new Array(N).fill(0),t:new Array(N).fill(0)};
+
+let latest=null; // last full snapshot rendered
+const batHist=new Array(N).fill(0);
+let coreN=0; const coreHist=[];
+const MONO='ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+
+/* ---------- helpers ---------- */
+const $=id=>document.getElementById(id);
+const GB=b=>(b/1073741824);
+function fmtGB(b){return GB(b).toFixed(1);}
+function fmtRate(bps){bps=Math.max(0,bps||0);const u=["B/s","KB/s","MB/s","GB/s"];let i=0,v=bps;
+  while(v>=1024&&i<3){v/=1024;i++;}return (v>=100?v.toFixed(0):v.toFixed(1))+" "+u[i];}
+function pctClass(p){return p>85?"crit":p>=60?"warn":"ok";}
+function shortCpu(name){const m=name&&name.match(/i\d-\d{4}\w?/);return m?m[0]:(name||"CPU");}
+function setCls(el,cls){el.classList.remove("ok","warn","crit");if(cls)el.classList.add(cls);}
+function hexA(h,a){const n=parseInt(h.slice(1),16);return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;}
+
+/* ---------- polling ---------- */
+async function getJSON(path){const r=await fetch(path,{cache:"no-store"});
+  if(!r.ok)throw new Error(r.status);return r.json();}
+const EP=["system","uptime","cpu","percpu","load","mem","memswap","quicklook",
+  "sensors","network","fs","diskio","processlist","wifi","ip","gpu","alert","containers"];
+
+async function poll(){
+  try{
+    const res=await Promise.all(EP.map(e=>getJSON("/api/4/"+e)));
+    const d={};EP.forEach((e,i)=>d[e]=res[i]);
+    if(!everReal){ // drop demo-seeded history so charts show only real samples
+      hist.cpu.fill(0);hist.down.fill(0);hist.up.fill(0);
+      coreHist.forEach(a=>a.fill(0));
+      const b=(d.sensors||[]).find(s=>s.type==="battery");
+      if(b)batHist.fill(b.value);
+    }
+    haveReal=true;everReal=true;
+    ingest(d,true);
+    setConn("live");
+  }catch(e){
+    setConn(everReal?"stale":"connecting"); // keep last data; never paint fake data
+  }
+}
+
+function setConn(mode){
+  const c=$("conn");c.className="conn "+mode;
+  $("connlbl").textContent={live:"LIVE",stale:"STALE",connecting:"CONNECTING"}[mode];
+  document.body.classList.toggle("stale-veil",mode==="stale");
+}
+
+/* ---------- ingest + render ---------- */
+function ingest(d,real){
+  latest=d;
+  // header
+  $("hostname").textContent=d.system.hostname||"server";
+  $("osline").textContent=[d.system.linux_distro, "Linux "+(d.system.os_version||"").split("-")[0],
+    shortCpu(d.quicklook.cpu_name), (d.cpu.cpucore||d.load.cpucore||"?")+" cores"].join(" · ");
+  $("uptime").textContent=typeof d.uptime==="string"?d.uptime:"—";
+
+  // CPU kpi
+  const cpu=+ (d.cpu.total||0);
+  $("cpu_v").textContent=cpu.toFixed(1);
+  $("cpu_load").textContent=[d.load.min1,d.load.min5,d.load.min15].map(x=>(+x).toFixed(2)).join(" / ");
+  $("cpu_ghz").textContent=((d.quicklook.cpu_hz_current||0)/1e9).toFixed(1);
+  setCls($("k_cpu"),pctClass(cpu));$("cpu_bar").style.width=cpu+"%";
+
+  // Memory
+  const mp=+(d.mem.percent||0);
+  $("mem_v").textContent=mp.toFixed(1);
+  $("mem_ud").textContent=fmtGB(d.mem.used)+" / "+fmtGB(d.mem.total)+" GB";
+  $("mem_avail").textContent=fmtGB(d.mem.available)+" GB";
+  $("mem_cache").textContent=(d.mem.cached!=null)?" · "+fmtGB(d.mem.cached)+" cached":"";
+  setCls($("k_mem"),pctClass(mp));$("mem_bar").style.width=mp+"%";
+
+  // Swap
+  const sp=+(d.memswap.percent||0);
+  $("swap_v").textContent=sp.toFixed(1);
+  $("swap_ud").textContent=fmtGB(d.memswap.used)+" / "+fmtGB(d.memswap.total)+" GB";
+  setCls($("k_swap"),pctClass(sp));$("swap_bar").style.width=sp+"%";
+
+  // Battery
+  const bat=(d.sensors||[]).find(s=>s.type==="battery");
+  if(bat){
+    $("k_bat").style.display="";
+    const charge=Math.round(bat.value);const st=(bat.status||"").toLowerCase();
+    $("bat_v").textContent=charge;
+    const segs=$("bat_segs");if(segs.children.length!==10)segs.innerHTML="<i></i>".repeat(10);
+    let cls;
+    if(st==="charging"||st==="full")cls="ok";
+    else cls=charge<15?"crit":charge<=40?"warn":"ok";
+    const col=cls==="crit"?"var(--crit)":cls==="warn"?"var(--warn)":(st==="charging"||st==="full")?"var(--ok)":"var(--accent)";
+    const lit=Math.max(0,Math.min(10,Math.round(charge/10)));
+    [...segs.children].forEach((c,i)=>c.style.background=i<lit?col:"var(--border)");
+    setCls($("k_bat"),cls);
+    let txt;
+    if(st==="charging")txt='<span class="arw" style="color:var(--ok)">↑</span> CHARGING';
+    else if(st==="full")txt='<span style="color:var(--ok)">●</span> FULL';
+    else if(st==="not charging")txt='<span style="color:var(--fg2)">◦</span> PLUGGED · IDLE';
+    else txt='<span class="arw" style="color:var(--'+(cls==="ok"?"fg2":cls)+')">▼</span> ON BATTERY';
+    $("bat_state").innerHTML=txt;
+    // richer metric: charge rate over last ~1 min + time-to-full/empty
+    batHist.push(bat.value);batHist.shift();
+    const past=batHist[N-31];
+    const rate=bat.value-past; // %/min
+    let est;
+    if(st==="full"){est="fully charged";}
+    else if(Math.abs(rate)>=0.05){
+      const mins=st==="charging"?(100-bat.value)/rate:bat.value/(-rate);
+      const sign=rate>0?"+":"";
+      if(isFinite(mins)&&mins>0&&mins<6000){
+        const hh=Math.floor(mins/60),mm=Math.round(mins%60);
+        est=(st==="charging"?"full in ":"empty in ")+(hh?hh+"h ":"")+mm+"m · "+sign+rate.toFixed(1)+"%/min";
+      } else est=sign+rate.toFixed(1)+"%/min";
+    } else est=(st==="charging"?"charging":"holding")+" · ~0%/min";
+    $("bat_est").textContent=est;
+    $("batpanel").style.display="";
+    $("batchart_r").textContent=charge+"% · "+(bat.status||"")+" · 3 min";
+  } else { $("k_bat").style.display="none"; $("batpanel").style.display="none"; }
+
+  // Network
+  let down=0,up=0;
+  (d.network||[]).filter(n=>n.interface_name!=="lo").forEach(n=>{
+    if(n.bytes_recv_rate_per_sec!=null)down+=n.bytes_recv_rate_per_sec; 
+    if(n.bytes_sent_rate_per_sec!=null)up+=n.bytes_sent_rate_per_sec;
+  });
+  // fallback delta if rates missing
+  if(down===0&&up===0){
+    const cr=(d.network||[]).filter(n=>n.interface_name!=="lo")
+      .reduce((a,n)=>({r:a.r+(n.bytes_recv||0),s:a.s+(n.bytes_sent||0)}),{r:0,s:0});
+    const now=Date.now();
+    if(prevNet&&now>prevT){const dt=(now-prevT)/1000;
+      down=Math.max(0,(cr.r-prevNet.r)/dt);up=Math.max(0,(cr.s-prevNet.s)/dt);}
+    prevNet=cr;prevT=now;
+  }
+  $("net_d").textContent=fmtRate(down);$("net_u").textContent=fmtRate(up);
+  $("net_if").textContent=(d.network||[]).filter(n=>n.interface_name!=="lo").map(n=>n.interface_name).join(", ")||"—";
+
+  // Processes
+  const procs=(d.processlist||[]).filter(p=>p.cpu_percent!=null);
+  $("proc_total").textContent=(d.processlist||[]).length;
+  $("proc_run").textContent=(d.processlist||[]).filter(p=>p.status==="R").length;
+  renderProcs(procs);
+
+  // per-core sparklines
+  pushCores(d.percpu||[]);drawCores(d.percpu||[]);
+  if(document.body.dataset.view==="term")renderTerm(d);
+  // storage
+  renderStorage(d.fs||[]);
+  // thermals
+  renderTemps(d.sensors||[]);
+  // memory composition / connectivity / events (real payload fields, see /api/4/{mem,wifi,ip,gpu,alert})
+  renderMemComp(d.mem||{});
+  renderConnectivity(d);
+  renderAlerts(d.alert||[]);
+  renderContainers(d.containers||[]);
+  $("lanip").textContent=(d.ip&&d.ip.address)?d.ip.address+(d.ip.mask_cidr!=null?"/"+d.ip.mask_cidr:""):"—";
+
+  // disk I/O history (whole disks only, not partitions)
+  let dr=0,dw=0;
+  (d.diskio||[]).filter(x=>/^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+)$/.test(x.disk_name))
+    .forEach(x=>{dr+=x.read_bytes_rate_per_sec||0;dw+=x.write_bytes_rate_per_sec||0;});
+
+  // history push
+  hist.cpu.push(cpu);hist.cpu.shift();
+  hist.down.push(down);hist.down.shift();
+  hist.up.push(up);hist.up.shift();
+  hist.dr.push(dr);hist.dr.shift();
+  hist.dw.push(dw);hist.dw.shift();
+  hist.t.push(Date.now());hist.t.shift();
+  drawCharts();
+}
+
+/* ---------- memory composition (fields: used/cached/buffers/free of total) ---------- */
+function renderMemComp(m){
+  const segs=[
+    {k:"used",v:m.used||0,c:"#c9c9ce"},
+    {k:"cached",v:m.cached||0,c:"#3b82f6"},
+    {k:"buffers",v:m.buffers||0,c:"#d97706"},
+    {k:"free",v:m.free||0,c:"rgba(255,255,255,.13)"}
+  ];
+  const tot=m.total||segs.reduce((a,s)=>a+s.v,0)||1;
+  const sw=c=>`<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c};margin-right:7px"></span>`;
+  $("memcomp").innerHTML=
+    '<div class="stack">'+segs.map(s=>`<i style="width:${(s.v/tot*100).toFixed(2)}%;background:${s.c}" title="${s.k}"></i>`).join("")+'</div>'+
+    segs.map(s=>`<div class="krow"><span class="k">${sw(s.c)}${s.k}</span><span class="v num">${fmtGB(s.v)} GB</span></div>`).join("")+
+    (m.shared!=null?`<div class="krow"><span class="k">shared</span><span class="v num">${fmtGB(m.shared)} GB</span></div>`:"");
+}
+
+/* ---------- connectivity: wifi [{ssid,quality_level dBm}], ip {address,mask_cidr}, gpu [{name,proc}] ---------- */
+function renderConnectivity(d){
+  const w=(d.wifi||[])[0], g=(d.gpu||[])[0], ip=d.ip||{};
+  let sig="—";
+  if(w&&w.quality_level!=null){
+    const dB=w.quality_level;
+    const word=dB>=-50?"excellent":dB>=-60?"good":dB>=-70?"fair":"weak";
+    sig=`${dB} dBm · ${word}`;
+  }
+  $("connectivity").innerHTML=
+    `<div class="krow"><span class="k">Interface</span><span class="v">${escapeHtml(w?w.ssid:"—")}</span></div>`+
+    `<div class="krow"><span class="k">Wi-Fi signal</span><span class="v num">${sig}</span></div>`+
+    `<div class="krow"><span class="k">LAN address</span><span class="v num">${escapeHtml(ip.address||"—")}${ip.mask_cidr!=null?"/"+ip.mask_cidr:""}</span></div>`+
+    (g?`<div class="krow"><span class="k">GPU</span><span class="v" style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(g.name||"gpu")}</span></div>`+
+       `<div class="krow"><span class="k">GPU util</span><span class="v num">${g.proc!=null?g.proc+"%":"—"}</span></div>`:"");
+}
+
+/* ---------- containers: /api/4/containers {name,status,uptime,image[],cpu_percent,memory_usage,memory_limit,io{cumulative_ior,cumulative_iow},engine} ---------- */
+function renderContainers(cs){
+  const run=cs.filter(c=>c.status==="running").length;
+  $("ctr_r").textContent=run+" running / "+cs.length+" total · "+((cs[0]&&cs[0].engine)||"docker");
+  $("ctrtb").innerHTML=cs.length?cs.slice()
+    .sort((a,b)=>(b.cpu_percent||0)-(a.cpu_percent||0))
+    .map(c=>{
+      const st=c.status||"?";
+      const dotCol=st==="running"?"var(--ok)":(st==="paused"||st==="restarting"||st==="created")?"var(--warn)":"var(--crit)";
+      const stCls=st==="running"?"R":(st==="paused"||st==="restarting"||st==="created")?"D":"Z";
+      const mu=c.memory_usage, ml=c.memory_limit;
+      const mp=(mu!=null&&ml)?(mu/ml*100):null;
+      const io=c.io||{};
+      return `<tr>
+        <td class="name"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dotCol};margin-right:8px"></span>${escapeHtml(c.name||"?")}</td>
+        <td class="usr">${escapeHtml((c.image&&c.image[0])||"—")}</td>
+        <td><span class="st ${stCls}">${escapeHtml(st)}</span></td>
+        <td class="r num">${escapeHtml(c.uptime||"—")}</td>
+        <td class="r num">${c.cpu_percent!=null?(+c.cpu_percent).toFixed(1):"—"}</td>
+        <td class="r num">${mu!=null?fmtSize(mu):"—"}</td>
+        <td class="r num">${mp!=null?mp.toFixed(1):"—"}</td>
+        <td class="r num">${fmtSize(io.cumulative_ior||0)} / ${fmtSize(io.cumulative_iow||0)}</td>
+      </tr>`;
+    }).join(""):'<tr><td colspan="8"><div class="quiet">no containers found — is /var/run/docker.sock mounted into glances?</div></td></tr>';
+}
+
+/* ---------- events: GlancesEvent {begin,end(-1 ongoing),state,type,min,max,avg,count,top[],desc} ---------- */
+function renderAlerts(alerts){
+  const t=x=>new Date(x*1000).toLocaleTimeString([],{hour12:false});
+  const list=alerts.slice().sort((a,b)=>b.begin-a.begin).slice(0,8);
+  $("alerts").innerHTML=list.length?list.map(a=>{
+    const ongoing=a.end==null||a.end<0;
+    const crit=a.state==="CRITICAL";
+    const col=ongoing?(crit?"var(--crit)":"var(--warn)"):"var(--fg3)";
+    const when=t(a.begin)+(ongoing?" · ongoing":" – "+t(a.end));
+    const stats=`max ${a.max!=null?(+a.max).toFixed(1):"—"} · avg ${a.avg!=null?(+a.avg).toFixed(1):"—"}`;
+    const top=(a.top&&a.top.length)?" · top: "+a.top.map(escapeHtml).join(", "):"";
+    return `<div class="krow">
+      <span class="k"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${col};margin-right:8px"></span>
+        <span class="num">${when}</span></span>
+      <span class="v">${escapeHtml(a.state||"")} ${escapeHtml(a.type||"")} <span style="color:var(--fg2);font-weight:400" class="num">${stats}${top}</span></span>
+    </div>`;
+  }).join(""):'<div class="quiet">No events — nothing crossed warning thresholds since boot</div>';
+}
+
+function pushCores(pc){
+  if(pc.length!==coreN){
+    coreN=pc.length;coreHist.length=0;
+    for(let i=0;i<coreN;i++)coreHist.push(new Array(N).fill(0));
+    $("cores").innerHTML=pc.map((c,i)=>`<div class="core">
+      <div class="chead"><span class="cn">CPU${c.cpu_number}</span><span class="cv" id="cv${i}">0</span></div>
+      <canvas id="core${i}"></canvas></div>`).join("");
+  }
+  pc.forEach((c,i)=>{const a=coreHist[i];if(a){a.push(Math.max(0,Math.min(100,c.total||0)));a.shift();}});
+}
+function drawCores(pc){
+  pc.forEach((c,i)=>{
+    const v=Math.round(c.total||0);
+    const col=v>85?"#f87171":v>=60?"#fbbf24":"#c9c9ce";
+    const el=$("cv"+i);if(el){el.textContent=v;el.style.color=v>=60?col:"var(--fg)";}
+    drawSpark($("core"+i),coreHist[i],col);
+  });
+}
+function drawSpark(cv,data,col){
+  if(!cv||!data)return;const {ctx,w,h}=setupCanvas(cv);ctx.clearRect(0,0,w,h);
+  const X=i=>w*i/(N-1), Y=v=>h-1-(h-2)*Math.min(1,v/100);
+  const g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,hexA(col,0.32));g.addColorStop(1,hexA(col,0));
+  ctx.beginPath();data.forEach((v,i)=>{const x=X(i),y=Y(v);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+  ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+  ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.lineJoin="round";ctx.beginPath();
+  data.forEach((v,i)=>{const x=X(i),y=Y(v);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+}
+
+function renderStorage(fs){
+  const box=$("storage");
+  const list=fs.filter(f=>f.size>=1073741824);
+  if(!list.length){box.innerHTML='<div style="color:var(--fg3);font-size:12px">No mounts</div>';return;}
+  box.innerHTML=list.map(f=>{
+    const p=+(f.percent||0);const cls=pctClass(p);
+    const col=cls==="crit"?"var(--crit)":cls==="warn"?"var(--warn)":"var(--ok)";
+    return `<div class="fsrow">
+      <div class="fshead"><span class="mp">${f.mnt_point}<small>${f.fs_type}</small></span>
+        <span class="pc num" style="color:${col}">${p.toFixed(1)}%</span></div>
+      <div class="bar"><i style="width:${p}%;background:${col}"></i></div>
+      <div class="fssub num">${fmtGB(f.used)} / ${fmtGB(f.size)} GB · ${fmtGB(f.free)} GB free</div>
+    </div>`;
+  }).join("");
+}
+
+function renderTemps(sensors){
+  const box=$("temps");
+  const temps=sensors.filter(s=>s.unit==="C");
+  box.innerHTML=temps.length?temps.map(s=>{
+    const warn=s.warning!=null?s.warning:80, crit=s.critical!=null?s.critical:95;
+    const cls=s.value>=crit?"crit":s.value>=warn?"warn":"ok";
+    const col=cls==="crit"?"var(--crit)":cls==="warn"?"var(--warn)":"var(--ok)";
+    return `<div class="tcell"><span class="tdot" style="background:${col}"></span>
+      <span class="tl">${s.label}</span><span class="tv num" style="color:${cls==='ok'?'var(--fg)':col}">${Math.round(s.value)}°</span></div>`;
+  }).join(""):'<div style="color:var(--fg3);font-size:12px">No sensors</div>';
+  const fan=sensors.find(s=>s.type==="fan_speed");
+  $("fan_v").textContent=fan?Math.round(fan.value):"—";
+}
+
+let expandedPid=null;
+function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+/* ---------- terminal (raw-api) view ---------- */
+function tcls(p){const c=pctClass(p);return c==="crit"?"t-crit":c==="warn"?"t-warn":"t-val";}
+function fmtSize(b){b=b||0;if(b>=1073741824)return (b/1073741824).toFixed(2)+"G";
+  if(b>=1048576)return (b/1048576).toFixed(1)+"M";if(b>=1024)return Math.round(b/1024)+"K";return Math.round(b)+"B";}
+function fmtTime(sec){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+  const p=n=>String(n).padStart(2,"0");return (h?h+":":"0:")+p(m)+":"+p(s);}
+function renderTerm(d){
+  if(!d)return;
+  const c=d.cpu||{}, cpu=+(c.total||0),mp=+(d.mem.percent||0),sp=+(d.memswap.percent||0);
+  const gh=((d.quicklook.cpu_hz_current||0)/1e9).toFixed(1);
+  const gmax=((d.quicklook.cpu_hz||0)/1e9).toFixed(1);
+  const bat=(d.sensors||[]).find(s=>s.type==="battery");
+  const fan=(d.sensors||[]).find(s=>s.type==="fan_speed");
+  const temps=(d.sensors||[]).filter(s=>s.unit==="C");
+  const nets=(d.network||[]).filter(n=>n.interface_name!=="lo");
+  const disks=(d.diskio||[]).filter(x=>/^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+)$/.test(x.disk_name));
+  const fss=(d.fs||[]).filter(f=>f.size>=1073741824);
+  const pl=d.processlist||[];
+  const procs=pl.filter(p=>p.cpu_percent!=null).sort((a,b)=>b.cpu_percent-a.cpu_percent);
+  const running=pl.filter(p=>p.status==="R").length, slp=pl.filter(p=>p.status==="S"||p.status==="I").length;
+  const oth=pl.length-running-slp;
+  const thr=pl.reduce((a,p)=>a+(p.num_threads||0),0);
+  const dt=POLL/1000;
+  const G=b=>(b!=null?fmtGB(b)+"G":"—");
+  const mr=(l,v,cls)=>`<div class="mrow"><span class="t-lbl">${l}</span><span class="${cls||'t-val'}">${v}</span></div>`;
+  const top=`<div class="t-top">
+    <span><span class="t-val">${escapeHtml(d.system.hostname||"server")}</span> <span class="t-dim">${escapeHtml(d.system.hr_name||d.system.linux_distro||"")}</span></span>
+    <span class="t-dim">uptime <span class="t-val">${typeof d.uptime==="string"?d.uptime:"—"}</span></span>
+    <span class="t-dim">${new Date().toLocaleString([],{hour12:false})}</span></div>
+    <div class="t-dim" style="margin-bottom:8px">${escapeHtml(d.quicklook.cpu_name||"")} · ${gh}/${gmax} GHz</div>`;
+  const meters=`<div class="t-meters">
+    ${mr("CPU",cpu.toFixed(1)+"%",tcls(cpu))}
+    ${mr("user",(c.user??0).toFixed(1)+"%")}
+    ${mr("system",(c.system??0).toFixed(1)+"%")}
+    ${mr("iowait",(c.iowait??0).toFixed(1)+"%",(c.iowait>5?"t-warn":"t-val"))}
+    ${mr("idle",(c.idle??0).toFixed(1)+"%","t-dim")}
+    ${mr("ctx/s",c.ctx_switches_rate_per_sec??"—","t-dim")}
+    ${mr("intr/s",c.interrupts_rate_per_sec??"—","t-dim")}
+    ${mr("MEM",mp.toFixed(1)+"%",tcls(mp))}
+    ${mr("used",G(d.mem.used))}
+    ${mr("free",G(d.mem.free??d.mem.available))}
+    ${mr("buffers",G(d.mem.buffers))}
+    ${mr("cached",G(d.mem.cached))}
+    ${mr("active",G(d.mem.active))}
+    ${mr("SWAP",sp.toFixed(1)+"%",tcls(sp))}
+    ${mr("swap used",G(d.memswap.used))}
+    ${mr("LOAD 1m",(+d.load.min1).toFixed(2))}
+    ${mr("LOAD 5m",(+d.load.min5).toFixed(2))}
+    ${mr("LOAD 15m",(+d.load.min15).toFixed(2))}
+    ${mr("cores",d.cpu.cpucore||d.load.cpucore||"?")}</div>`;
+  let left="";
+  left+=`<div class="t-sec">Network</div>`;
+  if(d.ip&&d.ip.address)left+=`<div class="t-kv"><span class="t-dim">ip</span><span class="t-val">${escapeHtml(d.ip.address)}${d.ip.mask_cidr!=null?"/"+d.ip.mask_cidr:""}</span></div>`;
+  const wf=(d.wifi||[])[0];
+  if(wf&&wf.quality_level!=null)left+=`<div class="t-kv"><span class="t-dim">wifi ${escapeHtml(wf.ssid||"")}</span><span class="${wf.quality_level>=-70?"t-val":"t-warn"}">${wf.quality_level} dBm</span></div>`;
+  nets.forEach(n=>left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(n.interface_name)}</span><span><span class="t-val">${fmtRate(n.bytes_recv_rate_per_sec)}</span> <span class="t-dim">/</span> <span class="t-val">${fmtRate(n.bytes_sent_rate_per_sec)}</span></span></div>`);
+  left+=`<div class="t-sec">Disk I/O</div>`;
+  disks.length?disks.forEach(x=>left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(x.disk_name)}</span><span><span class="t-val">${fmtRate(x.read_bytes_rate_per_sec)}</span> <span class="t-dim">/</span> <span class="t-val">${fmtRate(x.write_bytes_rate_per_sec)}</span></span></div>`):(left+=`<div class="t-kv"><span class="t-dim">no disk</span><span></span></div>`);
+  left+=`<div class="t-sec">File System</div>`;
+  fss.forEach(f=>left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(f.mnt_point)} <span style="opacity:.6">${escapeHtml(f.fs_type||"")}</span></span><span class="${tcls(f.percent||0)}">${fmtGB(f.used)}G / ${fmtGB(f.size)}G <span class="t-dim">(${(+f.percent).toFixed(0)}%)</span></span></div>`);
+  const ctrs=d.containers||[];
+  if(ctrs.length){
+    left+=`<div class="t-sec">Containers (${ctrs.filter(x=>x.status==="running").length}/${ctrs.length})</div>`;
+    ctrs.forEach(x=>{const cc=x.status==="running"?"t-val":x.status==="paused"?"t-warn":"t-crit";
+      left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(x.name||"?")}</span><span class="${cc}">${(x.cpu_percent!=null?(+x.cpu_percent).toFixed(1)+"% · ":"")}${x.memory_usage!=null?fmtSize(x.memory_usage)+" · ":""}${escapeHtml(x.status||"")}</span></div>`;});
+  }
+  left+=`<div class="t-sec">Sensors</div>`;
+  temps.forEach(s=>{const warn=s.warning!=null?s.warning:80,crit=s.critical!=null?s.critical:95;
+    const cc=s.value>=crit?"t-crit":s.value>=warn?"t-warn":"t-val";
+    left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(s.label)}</span><span class="${cc}">${Math.round(s.value)}°C</span></div>`;});
+  if(fan)left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(fan.label)}</span><span class="t-val">${Math.round(fan.value)} RPM</span></div>`;
+  if(bat){const st=(bat.status||"").toLowerCase();
+    const cc=(st==="charging"||st==="full")?"t-val":(bat.value<15?"t-crit":bat.value<=40?"t-warn":"t-val");
+    left+=`<div class="t-kv"><span class="t-dim">${escapeHtml(bat.label)}</span><span class="${cc}">${Math.round(bat.value)}% ${escapeHtml(bat.status||"")}</span></div>`;}
+  let rows="";
+  procs.forEach(p=>{
+    const res=p.memory_info?p.memory_info[0]:(p.memory_percent||0)/100*(d.mem.total||0);
+    const virt=p.memory_info?fmtSize(p.memory_info[1]):"—";
+    const tm=p.cpu_times?fmtTime((p.cpu_times.user||0)+(p.cpu_times.system||0)):"—";
+    const io=p.io_counters||[];
+    const r=io.length>=4?Math.max(0,io[0]-io[2])/dt:0, wv=io.length>=4?Math.max(0,io[1]-io[3])/dt:0;
+    const stC=p.status==="Z"?"t-crit":p.status==="D"?"t-warn":p.status==="R"?"t-val":"dim";
+    rows+=`<tr>
+      <td class="${tcls(p.cpu_percent)}">${(p.cpu_percent||0).toFixed(1)}</td>
+      <td>${(p.memory_percent||0).toFixed(1)}</td>
+      <td class="dim">${virt}</td>
+      <td class="fg">${fmtSize(res)}</td>
+      <td class="dim">${p.pid}</td>
+      <td class="l dim">${escapeHtml(p.username||"")}</td>
+      <td class="dim">${tm}</td>
+      <td class="dim">${p.num_threads||0}</td>
+      <td class="dim">${p.nice!=null?p.nice:0}</td>
+      <td class="${stC}">${p.status}</td>
+      <td class="dim">${r>0?fmtRate(r):"0"}</td>
+      <td class="dim">${wv>0?fmtRate(wv):"0"}</td>
+      <td class="l t-cmd">${escapeHtml(p.cmdline&&p.cmdline.length?p.cmdline.join(" "):p.name)}</td></tr>`;
+  });
+  const right=`<div><div class="t-sec">Tasks ${pl.length} (${thr} thr) · ${running} run · ${slp} slp · ${oth<0?0:oth} oth · sorted by CPU</div>
+    <div class="t-tasks"><table class="ttbl"><thead><tr><th>CPU%</th><th>MEM%</th><th>VIRT</th><th>RES</th><th>PID</th><th class="l">USER</th><th>TIME+</th><th>THR</th><th>NI</th><th>S</th><th>IORps</th><th>IOWps</th><th class="l">Command</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  $("termview").innerHTML=top+meters+`<div class="t-body"><div>${left}</div>${right}</div>`;
+}
+
+function renderProcs(procs){
+  const top=procs.slice().sort((a,b)=>b.cpu_percent-a.cpu_percent).slice(0,12);
+  $("proctb").innerHTML=top.map(p=>{
+    const st=["R","Z","D"].includes(p.status)?p.status:"S";
+    const io=p.io_counters;let dio=0;
+    if(io&&io.length>=4)dio=Math.max(0,io[0]-io[2])+Math.max(0,io[1]-io[3]);
+    const diskTxt=dio>0?fmtRate(dio/(POLL/1000)):'<span style="color:var(--fg3)">—</span>';
+    const open=p.pid===expandedPid;
+    let row=`<tr class="prow${open?' open':''}" data-pid="${p.pid}">
+      <td class="r num"><span class="exp">${open?'▾':'▸'}</span>${p.pid}</td>
+      <td class="name">${escapeHtml(p.name)}</td>
+      <td class="usr">${escapeHtml(p.username||"—")}</td>
+      <td class="r num">${(p.cpu_percent||0).toFixed(1)}</td>
+      <td class="r num">${(p.memory_percent||0).toFixed(1)}</td>
+      <td class="r num">${diskTxt}</td>
+      <td class="r num">${p.num_threads||"—"}</td>
+      <td><span class="st ${st}">${p.status}</span></td>
+    </tr>`;
+    if(open){
+      const cmd=(p.cmdline&&p.cmdline.length)?escapeHtml(p.cmdline.join(" ")):"(no command line — kernel thread)";
+      row+=`<tr class="pdetail"><td colspan="8"><span class="cmd">${cmd}</span></td></tr>`;
+    }
+    return row;
+  }).join("");
+}
+
+/* ---------- charts ---------- */
+function setupCanvas(cv){
+  const dpr=window.devicePixelRatio||1;
+  const w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const ctx=cv.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w,h};
+}
+const PAD={l:54,r:10,t:8,b:16};
+const hover={cpu:-1,net:-1,dio:-1,bat:-1};
+
+function niceMax(v){if(v<=0)return 1;const p=Math.pow(10,Math.floor(Math.log10(v)));
+  const f=v/p;const n=f<=1?1:f<=2?2:f<=5?5:10;return n*p;}
+
+function drawLine(cv,series,yMax,yFmt,which){
+  const {ctx,w,h}=setupCanvas(cv);
+  const pw=w-PAD.l-PAD.r, ph=h-PAD.t-PAD.b;
+  ctx.clearRect(0,0,w,h);
+  const X=i=>PAD.l+pw*i/(N-1);
+  const Y=v=>PAD.t+ph*(1-Math.min(1,Math.max(0,v)/yMax));
+  // dotted grid field (instrument texture)
+  ctx.fillStyle="rgba(255,255,255,.055)";
+  const cols=24;
+  for(let r=0;r<=4;r++)for(let c=0;c<=cols;c++)
+    ctx.fillRect(X(0)+pw*c/cols-0.5, PAD.t+ph*r/4-0.5, 1, 1);
+  // faint horizontal rules + y labels
+  ctx.font="10px "+MONO;ctx.textBaseline="middle";
+  for(let i=0;i<=4;i++){
+    const y=PAD.t+ph*i/4;
+    ctx.strokeStyle="rgba(255,255,255,.035)";ctx.beginPath();
+    ctx.moveTo(PAD.l,y+.5);ctx.lineTo(w-PAD.r,y+.5);ctx.stroke();
+    ctx.fillStyle="#6a6a70";ctx.textAlign="right";ctx.fillText(yFmt(yMax*(1-i/4)),PAD.l-8,y);
+  }
+  // x time ticks
+  ctx.textBaseline="top";ctx.textAlign="center";ctx.fillStyle="#5a5a60";
+  [["-3m",0],["-2m",1/3],["-1m",2/3],["now",1]].forEach(([lab,f])=>ctx.fillText(lab,X(0)+pw*f,PAD.t+ph+4));
+  series.forEach(s=>{
+    // area
+    const g=ctx.createLinearGradient(0,PAD.t,0,PAD.t+ph);
+    g.addColorStop(0,hexA(s.color,0.24));g.addColorStop(1,hexA(s.color,0));
+    ctx.beginPath();s.data.forEach((v,i)=>{const x=X(i),y=Y(v);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+    ctx.lineTo(X(N-1),PAD.t+ph);ctx.lineTo(X(0),PAD.t+ph);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+    // glowing trace
+    ctx.save();ctx.shadowColor=hexA(s.color,0.55);ctx.shadowBlur=6;
+    ctx.strokeStyle=s.color;ctx.lineWidth=1.7;ctx.lineJoin="round";ctx.beginPath();
+    s.data.forEach((v,i)=>{const x=X(i),y=Y(v);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();ctx.restore();
+    // head dot at current value
+    const hx=X(N-1),hy=Y(s.data[N-1]);
+    ctx.fillStyle=s.color;ctx.beginPath();ctx.arc(hx,hy,2.6,0,7);ctx.fill();
+    ctx.strokeStyle=hexA(s.color,0.35);ctx.lineWidth=1;ctx.beginPath();ctx.arc(hx,hy,4.5,0,7);ctx.stroke();
+  });
+  // hover crosshair
+  const hi=hover[which];
+  if(hi>=0&&hi<N){
+    const x=X(hi);
+    ctx.strokeStyle="rgba(255,255,255,.28)";ctx.lineWidth=1;ctx.beginPath();
+    ctx.moveTo(x+.5,PAD.t);ctx.lineTo(x+.5,PAD.t+ph);ctx.stroke();
+    series.forEach(s=>{const y=Y(s.data[hi]);ctx.fillStyle=s.color;
+      ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();});
+  }
+}
+
+function fmtRate0(bps){bps=Math.max(0,bps||0);const u=["B","KB","MB","GB"];let i=0,v=bps;
+  while(v>=1024&&i<3){v/=1024;i++;}return Math.round(v)+" "+u[i];}
+function drawCharts(){
+  drawLine($("cpuChart"),[{data:hist.cpu,color:"#c9c9ce"}],100,
+    v=>v.toFixed(0)+"%","cpu");
+  const nmax=niceMax(Math.max(1,...hist.down,...hist.up)*1.15);
+  drawLine($("netChart"),[
+    {data:hist.down,color:"#3b82f6"},{data:hist.up,color:"#d97706"}],nmax,
+    fmtRate0,"net");
+  const dmax=niceMax(Math.max(1,...hist.dr,...hist.dw)*1.15);
+  drawLine($("dioChart"),[
+    {data:hist.dr,color:"#3b82f6"},{data:hist.dw,color:"#d97706"}],dmax,
+    fmtRate0,"dio");
+  if($("batpanel").style.display!=="none")
+    drawLine($("batChart"),[{data:batHist,color:"#34d399"}],100,
+      v=>v.toFixed(0)+"%","bat");
+}
+
+/* hover handling */
+function bindHover(cv,which,series){
+  const ttip=$("ttip");
+  cv.addEventListener("mousemove",ev=>{
+    const rect=cv.getBoundingClientRect();
+    const pw=rect.width-PAD.l-PAD.r;
+    let rel=(ev.clientX-rect.left-PAD.l)/pw;
+    let i=Math.round(rel*(N-1));i=Math.max(0,Math.min(N-1,i));
+    hover[which]=i;drawCharts();
+    const agoS=(N-1-i)*2;
+    const rows=series().map(s=>`<div class="tr"><span><span class="sw" style="background:${s.color}"></span>${s.label}</span><b class="num">${s.fmt(s.data[i])}</b></div>`).join("");
+    ttip.innerHTML=`<div class="tt">${agoS===0?"now":agoS+"s ago"}</div>${rows}`;
+    ttip.style.display="block";
+    let tx=ev.clientX+14, ty=ev.clientY-10;
+    if(tx+150>window.innerWidth)tx=ev.clientX-150;
+    ttip.style.left=tx+"px";ttip.style.top=ty+"px";
+  });
+  cv.addEventListener("mouseleave",()=>{hover[which]=-1;$("ttip").style.display="none";drawCharts();});
+}
+bindHover($("cpuChart"),"cpu",()=>[{label:"CPU",color:"#c9c9ce",data:hist.cpu,fmt:v=>v.toFixed(1)+"%"}]);
+bindHover($("netChart"),"net",()=>[
+  {label:"Download",color:"#3b82f6",data:hist.down,fmt:fmtRate},
+  {label:"Upload",color:"#d97706",data:hist.up,fmt:fmtRate}]);
+bindHover($("dioChart"),"dio",()=>[
+  {label:"Read",color:"#3b82f6",data:hist.dr,fmt:fmtRate},
+  {label:"Write",color:"#d97706",data:hist.dw,fmt:fmtRate}]);
+bindHover($("batChart"),"bat",()=>[
+  {label:"Charge",color:"#34d399",data:batHist,fmt:v=>v.toFixed(0)+"%"}]);
+
+/* ---------- clock ---------- */
+function tickClock(){$("clock").textContent=new Date().toLocaleTimeString([], {hour12:false});}
+setInterval(tickClock,1000);tickClock();
+
+window.addEventListener("resize",()=>{drawCharts();if(latest)drawCores(latest.percpu||[]);});
+
+/* ---------- density toggle ---------- */
+function setDensity(d){
+  document.body.dataset.density=d==="compact"?"compact":"comfortable";
+  [...$("densbtn").children].forEach(b=>b.classList.toggle("on",b.dataset.d===d));
+  try{localStorage.setItem("sd_density",d);}catch(e){}
+  requestAnimationFrame(()=>{drawCharts();if(latest)drawCores(latest.percpu||[]);});
+}
+$("densbtn").addEventListener("click",e=>{const b=e.target.closest("button");if(b)setDensity(b.dataset.d);});
+let savedD="comfortable";try{savedD=localStorage.getItem("sd_density")||"comfortable";}catch(e){}
+setDensity(savedD);
+
+/* ---------- view toggle (dashboard / terminal) ---------- */
+function setView(v){
+  document.body.dataset.view=v==="term"?"term":"dash";
+  [...$("viewbtn").children].forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  try{localStorage.setItem("sd_view",v);}catch(e){}
+  if(v==="term")renderTerm(latest);
+  else requestAnimationFrame(()=>{drawCharts();if(latest)drawCores(latest.percpu||[]);});
+}
+$("viewbtn").addEventListener("click",e=>{const b=e.target.closest("button");if(b)setView(b.dataset.v);});
+let savedV="dash";try{savedV=localStorage.getItem("sd_view")||"dash";}catch(e){}
+setView(savedV);
+
+/* ---------- process row expand (cmdline) ---------- */
+$("proctb").addEventListener("click",e=>{
+  const tr=e.target.closest("tr.prow");if(!tr)return;
+  const pid=+tr.dataset.pid;expandedPid=expandedPid===pid?null:pid;
+  if(latest)renderProcs((latest.processlist||[]).filter(p=>p.cpu_percent!=null));
+});
+
+/* ---------- boot ---------- */
+setConn("connecting");
+poll();
+setInterval(poll,POLL);
+</script>
+</body>
+</html>

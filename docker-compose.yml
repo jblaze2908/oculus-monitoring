@@ -1,0 +1,20 @@
+services:
+  glances:
+    image: nicolargo/glances:4.5.5-full
+    restart: unless-stopped
+    network_mode: host   # real NICs (wlp2s0) + wifi signal
+    pid: host            # real host process list
+    uts: host            # real hostname/kernel in system plugin
+    environment:
+      - GLANCES_OPT=-w -B 127.0.0.1 -p 61208   # loopback only; dashboard proxies
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # containers plugin
+      - /etc/os-release:/etc/os-release:ro
+  dashboard:
+    build: .
+    image: jblaze2908/oculus-monitoring:1.1
+    restart: unless-stopped
+    network_mode: host   # reach glances on 127.0.0.1:61208, serve :8080
+    read_only: true
+    depends_on:
+      - glances
