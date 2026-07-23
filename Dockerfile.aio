@@ -3,10 +3,13 @@
 FROM python:3.12-slim-bookworm
 
 # glances[web] = REST API server; [containers] = docker plugin; batinfo = battery
-RUN pip install --no-cache-dir "glances[web,containers]==4.5.5" batinfo
+# smartmontools = SMART disk health for the monitor thread
+RUN apt-get update && apt-get install -y --no-install-recommends smartmontools \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "glances[web,containers]==4.5.5" batinfo
 
 WORKDIR /app
-COPY server.py index.html entrypoint.sh ./
+COPY server.py monitor.py index.html entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 # Runs as root intentionally: needs host /proc (pid: host) and docker.sock,
